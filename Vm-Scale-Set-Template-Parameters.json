@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "enter-location"
+    },
+    "vmSku": {
+      "value": "Standard_D2s_v3"
+    },
+    "vmssName": {
+      "value": "enter-vmss-name"
+    },
+    "instanceCount": {
+      "value": 2
+    },
+   "adminUsername": {
+      "reference": {
+        "keyVault": {
+          "id": "enter-key-vault-id-for-username"
+        },
+        "secretName": "username"
+      }
+    },
+    "authenticationType": {
+      "value": "password"
+    },
+    "adminPasswordOrKey": {
+      "reference": {
+        "keyVault": {
+          "id": "enter-key-vault-id-for-password"
+        },
+        "secretName": "adminPasswordOrKey"
+      }
+    },
+    "securityType": {
+      "value": "TrustedLaunch"
+    }
+  }
+}

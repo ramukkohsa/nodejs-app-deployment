@@ -1,0 +1,170 @@
+trigger:
+- main
+
+pool:
+  name: default
+
+
+stages: 
+- stage: waitForValidation
+  jobs:
+    - job: ApproveDeployment
+      displayName: Wait for Client validation
+      pool: server
+      timeoutInMinutes: 4320 # job times out in 3 days
+      steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 1440 # task times out in 1 day
+        inputs:
+          notifyUsers: 'enter email'
+          instructions: 'Please validate the build configuration and resume'
+
+
+#steps:
+# - task: SonarQubePrepare@5
+#   inputs:
+#     SonarQube: 'sonarqube'
+#     scannerMode: 'CLI'
+#     configMode: 'manual'
+#     cliProjectKey: 'enter-project-key'
+#     cliProjectName: 'enter-project-name'
+#     cliSources: 'server'
+#     extraProperties: |
+#       sonar.qualitygate.wait=true
+#       sonar.sources=server
+#       sonar.test.inclusions=**/*.test.js
+#       sonar.tests=server
+#       sonar.javascript.lcov.reportPaths=coverage/lcov.info
+#       sonar.javascript.node.mazspace=2048
+
+
+- stage: Build
+  jobs:
+  - job: Build
+    displayName: "Install npm packages and Build"
+    workspace:
+      clean: all
+    steps:
+     - checkout: self
+       submodules: true
+     - task: NodeTool@0
+       inputs:
+          versionSpec: '18.x'
+          checkLatest: true
+       displayName: 'Install Node.js'
+
+
+     - script: |
+        npm install
+       displayName: 'Install dependencies'
+
+
+     - script: |
+        npm run build
+       displayName: 'Build'
+
+
+     - task: CopyFiles@2
+       inputs:
+         SourceFolder: '$(System.DefaultWorkingDirectory)'
+         contents: |
+            src/*
+            public/*
+            package.json
+         TargetFolder: '$(Build.ArtifactStagingDirectory)'
+         OverWrite: true
+       displayName: 'Copy build files to artifacts'
+
+     - task: PublishBuildArtifacts@1
+       inputs:
+         pathToPublish: '$(Build.ArtifactStagingDirectory)'
+         artifactName: drop
+       displayName: 'Publish build artifacts'
+
+
+     - task: PublishPipelineArtifact@1
+       inputs:
+         targetPath: '$(Build.ArtifactStagingDirectory)'
+         artifact: 'e2e-server-$(Build.BuildNumber)'
+         publishLocation: 'pipeline'
+       displayName: 'Publish Artifact'
+
+
+     - task: DownloadPipelineArtifact@2
+       inputs:
+         buildType: 'current'
+         targetPath: '$(Pipeline.Workspace)'
+
+     - task: ArchiveFiles@2
+       displayName: 'Archive files'
+       inputs:
+         rootFolderOrFile: '$(Pipeline.Workspace)/e2e-server-$(Build.BuildNumber)'
+         includeRootFolder: false
+         archiveType: 'tar'
+         tarCompression: 'none'
+         archiveFile: 'e2e-server.tar'
+         replaceExistingArchive: true
+
+    
+     - script: |
+          az --version
+          az storage blob upload --connection-string 'enter-storage-account-connection-string' --container-name 'nodejs' --file '$(System.DefaultWorkingDirectory)/e2e-server.tar' --name 'e2e-server.tar' --overwrite --sas-token 'eneter token for the storage account'
+       displayName: Upload Artifacts to Storage Account
+
+
+    #  - script: |
+    #       npm start
+    #    displayName: 'start application'    
+   
+
+- stage: Release
+  jobs:
+    - job: Deploy
+      displayName: Deploying
+      steps:
+
+      - task: DownloadPipelineArtifact@2
+        inputs:
+          source: 'current'
+          artifact: 'e2e-server-$(Build.BuildNumber)'
+          path: '$(Pipeline.Workspace)'
+
+    # - task: SonarQubePublish@5
+    #   inputs:
+    #     pollingTimeoutSec: '300'
+
+ 
+      - task: CmdLine@2
+        inputs:
+          script: 'chmod 777 $(System.DefaultWorkingDirectory)/deploy.sh' 
+
+    
+      - task: AzureResourceManagerTemplateDeployment@3
+        inputs:
+          deploymentScope: 'Resource Group'
+          azureResourceManagerConnection: 'enter-service-connection'
+          subscriptionId: 'enter-subscription-id'
+          action: 'Create Or Update Resource Group'
+          resourceGroupName: 'enter-resource-group-name'
+          location: 'enter-location'
+          templateLocation: 'Linked artifact'
+          csmFile: '$(System.DefaultWorkingDirectory)/Vm-Scale-Set-Template.json'
+          csmParametersFile: '$(System.DefaultWorkingDirectory)/Vm-Scale-Set-Template-Parameters.json'
+          deploymentMode: 'Incremental'
+        displayName: 'Deploy to Azure VM using ARM templates'
+    
+
+      - task: AzureVmssDeployment@0
+        displayName: Download Artifacts from Storage Account and Deploy in to VMs
+        inputs:
+          azureSubscription: 'enter-subscription-id'
+          action: 'Configure application startup'
+          vmssName: 'enter-vmss-name'
+          vmssOsType: 'Linux'
+          customScriptsDirectory: '$(Build.ArtifactStagingDirectory)'
+          customScript: 'bash deploy.sh'
+          customScriptsStorageAccount: 'enter-storage-account-name'
+          skipArchivingCustomScripts: true
+
+
+            
